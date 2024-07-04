@@ -9,7 +9,7 @@ import numpy as np
 import copy
 import random
 
-class RLatt(RLMAV):
+class RLattbody(RLMAV):
     def __init__(self,
                  urdf_name:str=GLOBAL_CONFIGURATION.temporary_urdf_path + f"Ng_10_AR_5.2_TR_0.8_R22_4e-06.urdf",
                  initial_pos=np.array([0, 0, 0.5]),
@@ -33,56 +33,22 @@ class RLatt(RLMAV):
         super().__init__(urdf_name, mav_params_copy, motor_params, wing_params, gui, pyb, client)
 
     def _getDroneStateVector(self):
-        # OBS SPACE OF SIZE 12
-        # eXYZ, erpy, V, W
-        # temporarily assume that target_att approx initial_att
-        if self.target_rpy0_flag:
-            err_pos = self.pos[:]-self.TARGET_POS[:]
-            err_rpy = self.rpy[:]-self.TARGET_RPY[:]
-            state = np.hstack((err_pos[:], err_rpy[:],
-                            self.vel[:], self.ang_v[:]))
-            return state.reshape(12, )
-        else:
-            #aRb means the rotation matrix of a in b
-            #e_ represents the ground coordinate system, 
-            #t_ represents the ground coordinate system rotated by a certain yaw angle from the initial attitude,
-            #b_ represents the body coordinate system.
-            err_e_pos = np.array(self.pos[:]-self.TARGET_POS[:])
-            e_vel =  np.array(self.vel[:])
-            e_ang_v = np.array(self.ang_v[:])
-            bRe = np.array(self._p.getMatrixFromQuaternion(self.quat)).reshape(3, 3)
-
-            # tQe = self._p.getQuaternionFromEuler(self.TARGET_RPY)
-            # tRe = np.array(self._p.getMatrixFromQuaternion(tQe)).reshape(3, 3)
-            # More generally, should use the transpose of the tRe​ matrix to obtain the eRt​ matrix. 
-            # Below, only the rotation about the yaw is considered.
-            eQt = self._p.getQuaternionFromEuler(-self.TARGET_RPY)
-            eRt = np.array(self._p.getMatrixFromQuaternion(eQt)).reshape(3, 3)
-
-            # Convert e_pos, e_vel, and e_ang_v to column vectors
-            err_e_pos_col = err_e_pos.reshape(-1, 1)
-            e_vel_col = e_vel.reshape(-1, 1)
-            e_ang_v_col = e_ang_v.reshape(-1, 1)
-
-            # Stack column vectors to form a 3x6 matrix
-            matrix_3x6 = np.hstack((err_e_pos_col, bRe, e_vel_col, e_ang_v_col))
-
-            # Perform left multiplication of eRt with the 3x6 matrix
-            result_matrix = np.dot(eRt, matrix_3x6)
-
-            # Extract individual columns from the resulting matrix
-            err_t_pos = result_matrix[:, 0]
-
-            bRt = result_matrix[:, 1:4].reshape(3, 3)
-            t_quat = self._getQuaternionFromMatrix(bRt)
-            t_att = self._p.getEulerFromQuaternion(t_quat)
-
-            t_vel = result_matrix[:, 4]
-            t_ang_v = result_matrix[:, 5]
-
-            state = np.hstack((err_t_pos[:], t_att[:],
-                            t_vel[:], t_ang_v[:]))
-            return state.reshape(12, )
+        #aRb means the rotation matrix of a in b
+        #e_ represents the ground coordinate system, 
+        #b_ represents the body coordinate system.
+        e_err_pos = self.pos[:]-self.TARGET_POS[:]
+        e_rpy = self.rpy[:]
+        e_vel_col = np.array(self.vel[:]).reshape(-1,1)
+        e_ang_v_col = np.array(self.ang_v[:]).reshape(-1,1)
+        matrix_3x2 = np.hstack((e_vel_col,e_ang_v_col))
+        bRe = np.array(self._p.getMatrixFromQuaternion(self.quat)).reshape(3, 3)
+        eRb = bRe.T
+        result_matrix = np.dot(eRb, matrix_3x2)
+        b_vel = result_matrix[:, 0]
+        b_ang_v = result_matrix[:, 1]
+        state = np.hstack((e_err_pos[:], e_rpy[:],
+                        b_vel[:], b_ang_v[:]))
+        return state.reshape(12, )
         
     def _getQuaternionFromMatrix(self,bRe):
         
@@ -110,8 +76,8 @@ class RLatt(RLMAV):
         if self.trunc_flag:
             state = self._getDroneStateVector()
             #  If flying too far
-            if (abs(state[0]) > 0.05 or abs(state[1]) > 0.05 or abs(state[2]) >0.3 or
-                abs(state[3]) > np.pi / 4 or abs(state[4]) > np.pi / 4 or abs(state[5]) > np.pi / 4):
+            if (abs(state[0]) > 0.1 or abs(state[1]) > 0.1 or abs(state[2]) >0.3 or
+                abs(state[3]) > np.pi / 4 or abs(state[4]) > np.pi / 4 ):
                 return True
             # Maintain vertical attitude
             Rot = np.array(self._p.getMatrixFromQuaternion(self.quat)).reshape(3, 3)
@@ -137,7 +103,10 @@ class RLatt(RLMAV):
         z_position = np.random.uniform(0.4, 0.6)
         random_pos = np.array([0, 0, z_position])
         np.random.seed(seed)
-        random_att = np.pi / 72 * (2 * np.random.rand(3) - [1, 1, 1])
+        roll = np.pi / 72 * (2 * np.random.rand(1) - 1)
+        pitch = np.pi / 72 * (2 * np.random.rand(1) - 1)
+        yaw = np.pi * (2 * np.random.rand(1) - 1)
+        random_att = np.array([roll, pitch, yaw])
         self.mav_params.change_parameters(initial_xyz=random_pos)
         self.mav_params.change_parameters(initial_rpy=random_att)
         super()._housekeeping(p_this, seed0)
